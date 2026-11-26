@@ -52,8 +52,9 @@ struct GGUFTokenizer {
             throw TokenizerError.missingVocabulary
         }
         tokens = words
-        tokenIDs = Dictionary(words.enumerated().map { ($0.element, $0.offset) },
-                              uniquingKeysWith: { first, _ in first })
+        let ids = Dictionary(words.enumerated().map { ($0.element, $0.offset) },
+                             uniquingKeysWith: { first, _ in first })
+        tokenIDs = ids
         if case .array(let rawScores)? = metadata["tokenizer.ggml.scores"] {
             scores = rawScores.map { value in
                 if case .floating(let number) = value { return number }
@@ -82,7 +83,7 @@ struct GGUFTokenizer {
                       "tokenizer.ggml.eom_token_id"]
             .compactMap { Self.integer(metadata[$0]) }
             + ["<|eot_id|>", "<|im_end|>"]
-                .compactMap { tokenIDs[$0] })
+                .compactMap { ids[$0] })
     }
 
     func id(for token: String) -> Int? { tokenIDs[token] }
