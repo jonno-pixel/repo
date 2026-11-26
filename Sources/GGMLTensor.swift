@@ -121,6 +121,70 @@ struct GGMLTensor {
                         values[block * 32 + offset] = scale * Float(quantized)
                     }
                 }
+            case 9:
+                for block in 0..<blocks {
+                    let start = source.advanced(by: block * 36)
+                    let bits = UInt16(littleEndian: start.loadUnaligned(as: UInt16.self))
+                    let scale = Float(Float16(bitPattern: bits))
+                    for offset in 0..<32 {
+                        values[block * 32 + offset] = scale
+                            * Float(start.load(fromByteOffset: offset + 4, as: Int8.self))
+                    }
+                }
+            case 10:
+                for block in 0..<blocks {
+                    let start = source.advanced(by: block * 84)
+                    let dBits = UInt16(littleEndian: start.loadUnaligned(fromByteOffset: 80, as: UInt16.self))
+                    let minBits = UInt16(littleEndian: start.loadUnaligned(fromByteOffset: 82, as: UInt16.self))
+                    let d = Float(Float16(bitPattern: dBits))
+                    let dmin = Float(Float16(bitPattern: minBits))
+                    for half in 0..<2 {
+                        for group in 0..<4 {
+                            let shift = group * 2
+                            for subblock in 0..<2 {
+                                let scaleByte = start.load(fromByteOffset: half * 8 + group * 2 + subblock,
+                                                           as: UInt8.self)
+                                let scale = d * Float(scaleByte & 15)
+                                let minimum = dmin * Float(scaleByte >> 4)
+                                for offset in 0..<16 {
+                                    let packed = start.load(fromByteOffset: 16 + half * 32
+                                                            + subblock * 16 + offset, as: UInt8.self)
+                                    let quantized = Float((packed >> shift) & 3)
+                                    let index = block * 256 + half * 128 + group * 32
+                                        + subblock * 16 + offset
+                                    values[index] = scale * quantized - minimum
+                                }
+                            }
+                        }
+                    }
+                }
+            case 11:
+                for block in 0..<blocks {
+                    let start = source.advanced(by: block * 110)
+                    let bits = UInt16(littleEndian: start.loadUnaligned(fromByteOffset: 108, as: UInt16.self))
+                    let d = Float(Float16(bitPattern: bits))
+                    for half in 0..<2 {
+                        for group in 0..<4 {
+                            let shift = group * 2
+                            let highMask = UInt8(1 << (half * 4 + group))
+                            for subblock in 0..<2 {
+                                let scaleIndex = half * 8 + group * 2 + subblock
+                                let scale = d * Float(Self.q3Scale(start, scaleIndex) - 32)
+                                for offset in 0..<16 {
+                                    let quantizedByte = start.load(fromByteOffset: 32 + half * 32
+                                                                   + subblock * 16 + offset, as: UInt8.self)
+                                    let highByte = start.load(fromByteOffset: subblock * 16 + offset,
+                                                              as: UInt8.self)
+                                    let quantized = Int((quantizedByte >> shift) & 3)
+                                        - ((highByte & highMask) == 0 ? 4 : 0)
+                                    let index = block * 256 + half * 128 + group * 32
+                                        + subblock * 16 + offset
+                                    values[index] = scale * Float(quantized)
+                                }
+                            }
+                        }
+                    }
+                }
             case 12, 13:
                 let fiveBit = descriptor.storageType == 13
                 let blockSize = fiveBit ? 176 : 144
@@ -181,6 +245,16 @@ struct GGMLTensor {
                         }
                     }
                 }
+            case 15:
+                for block in 0..<blocks {
+                    let start = source.advanced(by: block * 292)
+                    let bits = UInt32(littleEndian: start.loadUnaligned(as: UInt32.self))
+                    let scale = Float(bitPattern: bits)
+                    for offset in 0..<256 {
+                        values[block * 256 + offset] = scale
+                            * Float(start.load(fromByteOffset: offset + 4, as: Int8.self))
+                    }
+                }
             case 30:
                 for column in 0..<columns {
                     let bits = UInt32(UInt16(littleEndian: source.loadUnaligned(fromByteOffset: 2 * column, as: UInt16.self))) << 16
@@ -221,9 +295,13 @@ struct GGMLTensor {
         case 6: return (32, 22)
         case 7: return (32, 24)
         case 8: return (32, 34)
+        case 9: return (32, 36)
+        case 10: return (256, 84)
+        case 11: return (256, 110)
         case 12: return (256, 144)
         case 13: return (256, 176)
         case 14: return (256, 210)
+        case 15: return (256, 292)
         default: return nil
         }
     }
@@ -240,5 +318,21 @@ struct GGMLTensor {
         let minimum = Int(scaleByte(index + 4) >> 4)
             | (Int(scaleByte(index) >> 6) << 4)
         return (scale, minimum)
+    }
+
+    private static func q3Scale(_ block: UnsafeRawPointer, _ index: Int) -> Int {
+        func byte(_ offset: Int) -> UInt8 {
+            block.load(fromByteOffset: 96 + offset, as: UInt8.self)
+        }
+        switch index {
+        case 0..<4:
+            return Int(byte(index) & 15) | (Int(byte(8 + index) & 3) << 4)
+        case 4..<8:
+            return Int(byte(index) & 15) | (Int((byte(8 + index - 4) >> 2) & 3) << 4)
+        case 8..<12:
+            return Int(byte(index - 8) >> 4) | (Int((byte(8 + index - 8) >> 4) & 3) << 4)
+        default:
+            return Int(byte(index - 8) >> 4) | (Int((byte(8 + index - 12) >> 6) & 3) << 4)
+        }
     }
 }
