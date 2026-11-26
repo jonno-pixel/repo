@@ -80,7 +80,9 @@ struct GGUFTokenizer {
         endIDs = Set(["tokenizer.ggml.eos_token_id",
                       "tokenizer.ggml.eot_token_id",
                       "tokenizer.ggml.eom_token_id"]
-            .compactMap { Self.integer(metadata[$0]) })
+            .compactMap { Self.integer(metadata[$0]) }
+            + ["<|eot_id|>", "<|im_end|>"]
+                .compactMap { tokenIDs[$0] })
     }
 
     func id(for token: String) -> Int? { tokenIDs[token] }
