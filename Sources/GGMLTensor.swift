@@ -121,6 +121,66 @@ struct GGMLTensor {
                         values[block * 32 + offset] = scale * Float(quantized)
                     }
                 }
+            case 12, 13:
+                let fiveBit = descriptor.storageType == 13
+                let blockSize = fiveBit ? 176 : 144
+                let highOffset = 16
+                let lowOffset = fiveBit ? 48 : 16
+                for block in 0..<blocks {
+                    let start = source.advanced(by: block * blockSize)
+                    let dBits = UInt16(littleEndian: start.loadUnaligned(as: UInt16.self))
+                    let minBits = UInt16(littleEndian: start.loadUnaligned(fromByteOffset: 2, as: UInt16.self))
+                    let d = Float(Float16(bitPattern: dBits))
+                    let dmin = Float(Float16(bitPattern: minBits))
+                    for group in 0..<4 {
+                        let (scale0, min0) = Self.scaleMin(start, group * 2)
+                        let (scale1, min1) = Self.scaleMin(start, group * 2 + 1)
+                        let lowScale = d * Float(scale0)
+                        let highScale = d * Float(scale1)
+                        let lowMinimum = dmin * Float(min0)
+                        let highMinimum = dmin * Float(min1)
+                        for offset in 0..<32 {
+                            let byte = start.load(fromByteOffset: lowOffset + group * 32 + offset,
+                                                  as: UInt8.self)
+                            let highByte = fiveBit
+                                ? start.load(fromByteOffset: highOffset + offset, as: UInt8.self)
+                                : 0
+                            let lowHighBit = fiveBit && (highByte & (1 << (group * 2))) != 0 ? 16 : 0
+                            let upperHighBit = fiveBit && (highByte & (2 << (group * 2))) != 0 ? 16 : 0
+                            values[block * 256 + group * 64 + offset] =
+                                lowScale * Float(Int(byte & 15) + lowHighBit) - lowMinimum
+                            values[block * 256 + group * 64 + offset + 32] =
+                                highScale * Float(Int(byte >> 4) + upperHighBit) - highMinimum
+                        }
+                    }
+                }
+            case 14:
+                for block in 0..<blocks {
+                    let start = source.advanced(by: block * 210)
+                    let bits = UInt16(littleEndian: start.loadUnaligned(fromByteOffset: 208, as: UInt16.self))
+                    let d = Float(Float16(bitPattern: bits))
+                    for half in 0..<2 {
+                        for offset in 0..<32 {
+                            let low0 = start.load(fromByteOffset: half * 64 + offset, as: UInt8.self)
+                            let low1 = start.load(fromByteOffset: half * 64 + offset + 32, as: UInt8.self)
+                            let high = start.load(fromByteOffset: 128 + half * 32 + offset, as: UInt8.self)
+                            let scaleIndex = 192 + half * 8 + offset / 16
+                            let s0 = Float(start.load(fromByteOffset: scaleIndex, as: Int8.self))
+                            let s1 = Float(start.load(fromByteOffset: scaleIndex + 2, as: Int8.self))
+                            let s2 = Float(start.load(fromByteOffset: scaleIndex + 4, as: Int8.self))
+                            let s3 = Float(start.load(fromByteOffset: scaleIndex + 6, as: Int8.self))
+                            let q0 = Int(low0 & 15) | (Int(high & 3) << 4)
+                            let q1 = Int(low1 & 15) | (Int((high >> 2) & 3) << 4)
+                            let q2 = Int(low0 >> 4) | (Int((high >> 4) & 3) << 4)
+                            let q3 = Int(low1 >> 4) | (Int((high >> 6) & 3) << 4)
+                            let index = block * 256 + half * 128 + offset
+                            values[index] = d * s0 * Float(q0 - 32)
+                            values[index + 32] = d * s1 * Float(q1 - 32)
+                            values[index + 64] = d * s2 * Float(q2 - 32)
+                            values[index + 96] = d * s3 * Float(q3 - 32)
+                        }
+                    }
+                }
             case 30:
                 for column in 0..<columns {
                     let bits = UInt32(UInt16(littleEndian: source.loadUnaligned(fromByteOffset: 2 * column, as: UInt16.self))) << 16
@@ -161,7 +221,24 @@ struct GGMLTensor {
         case 6: return (32, 22)
         case 7: return (32, 24)
         case 8: return (32, 34)
+        case 12: return (256, 144)
+        case 13: return (256, 176)
+        case 14: return (256, 210)
         default: return nil
         }
+    }
+
+    private static func scaleMin(_ block: UnsafeRawPointer, _ index: Int) -> (Int, Int) {
+        func scaleByte(_ offset: Int) -> UInt8 {
+            block.load(fromByteOffset: 4 + offset, as: UInt8.self)
+        }
+        if index < 4 {
+            return (Int(scaleByte(index) & 63), Int(scaleByte(index + 4) & 63))
+        }
+        let scale = Int(scaleByte(index + 4) & 15)
+            | (Int(scaleByte(index - 4) >> 6) << 4)
+        let minimum = Int(scaleByte(index + 4) >> 4)
+            | (Int(scaleByte(index) >> 6) << 4)
+        return (scale, minimum)
     }
 }
