@@ -1,0 +1,26 @@
+name: JJS
+options:
+  bundleIdPrefix: nl.jjs
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    IPHONEOS_DEPLOYMENT_TARGET: "17.0"
+    CODE_SIGNING_ALLOWED: "NO"
+    TARGETED_DEVICE_FAMILY: "1,2"
+    ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+    OTHER_LDFLAGS: "$(inherited) -lsqlite3"
+targets:
+  JJS:
+    type: application
+    platform: iOS
+    deploymentTarget: "17.0"
+    sources:
+      - path: Sources
+      - path: Assets.xcassets
+    info:
+      path: Sources/Info.plist
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: nl.jjs.app
+        PRODUCT_NAME: JJS
+        CODE_SIGNING_ALLOWED: "NO"
