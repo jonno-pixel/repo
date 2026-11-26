@@ -78,7 +78,7 @@ actor ModelRepository {
     func storage() throws -> PhoneStorage {
         let values = try root.resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey,
                                                         .volumeTotalCapacityKey])
-        return PhoneStorage(availableBytes: values.volumeAvailableCapacityForImportantUsage.map(Int64.init),
-                            totalBytes: values.volumeTotalCapacity.map(Int64.init))
+        return PhoneStorage(availableBytes: values.volumeAvailableCapacityForImportantUsage.map { Int64($0) },
+                            totalBytes: values.volumeTotalCapacity.map { Int64($0) })
     }
 }
